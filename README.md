@@ -65,7 +65,7 @@ The script maintains state and logs errors using two key files:
 Clone this repository to your local machine using the following command:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/JamesonCodes/s3-image-importer.git
 cd s3-image-importer
 ```
 
