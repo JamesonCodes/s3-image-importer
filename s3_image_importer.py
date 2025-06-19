@@ -13,10 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()  # Load variables from .env file
 
 # --- CONFIGURATION ---
-CSV_FILE_PATH = 'your_image_urls.csv'       # 👈 E.g., 'sock_designs.csv'
-URL_COLUMN_NAME = 'URL'                     # Column in your CSV with the image URLs
-DEST_S3_BUCKET = 'sock-design-images'       # Your destination S3 bucket
-DEST_S3_FOLDER = 'Batch3'                   # The folder (prefix) within the bucket
+CSV_FILE_PATH = 'your_image_urls.csv'       # Your CSV filename
+URL_COLUMN_NAME = 'URL'                     # Column with image URLs (update if your CSV uses a different column name)
+DEST_S3_BUCKET = 'your-s3-bucket-name'      # Your destination S3 bucket
+DEST_S3_FOLDER = 'your/s3/folder'           # The folder (prefix) within the bucket (e.g., 'Batch1' or 'images/')
 
 MAX_WORKERS = 30                            # Adjust based on your system. 20-50 is a reasonable range.
 

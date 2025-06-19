@@ -61,12 +61,18 @@ The script maintains state and logs errors using two key files:
 ### 1. Prerequisites
 - Python 3.7 or newer installed.
 
-### 2. Create Your Project Folder
-- Create a new folder for your project and navigate into it using your terminal.
+### 2. Clone the Repository
+Clone this repository to your local machine using the following command:
 
-### 3. Add Project Files
-- Save the script as `s3_image_importer.py` in your project folder.
-- Place your CSV data file (e.g., `your_image_urls.csv`) in the same folder.
+```bash
+git clone <repository-url>
+cd s3-image-importer
+```
+
+### 3. Add Your CSV Data File
+After cloning the repository, all necessary project files (including `s3_image_importer.py` and `requirements.txt`) are already present.
+
+Place your CSV data file (e.g., `your_image_urls.csv`) in the project folder. This file should contain the image URLs you want to process.
 
 ### 4. Install Dependencies
 Install all required Python libraries using the provided `requirements.txt` file:
@@ -100,9 +106,9 @@ Before running the script, you must configure the constants at the top of the `s
 ```python
 # --- CONFIGURATION ---
 CSV_FILE_PATH = 'your_image_urls.csv'       # Your CSV filename
-URL_COLUMN_NAME = 'URL'                     # Column with image URLs
-DEST_S3_BUCKET = 'sock-design-images'       # Your destination S3 bucket
-DEST_S3_FOLDER = 'Batch3'                   # The folder within the bucket
+URL_COLUMN_NAME = 'URL'                     # Column with image URLs (update if your CSV uses a different column name)
+DEST_S3_BUCKET = 'your-s3-bucket-name'      # Your destination S3 bucket
+DEST_S3_FOLDER = 'your/s3/folder'           # The folder (prefix) within the bucket (e.g., 'Batch1' or 'images/')
 MAX_WORKERS = 30                            # Number of concurrent downloads
 ```
 
