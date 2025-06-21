@@ -3,25 +3,28 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import os
 import logging
-import requests  # <-- Required for downloading from public URLs
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from tqdm import tqdm
 from dotenv import load_dotenv
+from io import BytesIO
+from PIL import Image as PILImage
+from typing import cast # <-- Add this import
 
 # --- SCRIPT SETUP ---
-load_dotenv()  # Load variables from .env file
+load_dotenv()
 
 # --- CONFIGURATION ---
-CSV_FILE_PATH = 'your_image_urls.csv'       # Your CSV filename
-URL_COLUMN_NAME = 'URL'                     # Column with image URLs (update if your CSV uses a different column name)
-DEST_S3_BUCKET = 'your-s3-bucket-name'      # Your destination S3 bucket
-DEST_S3_FOLDER = 'your/s3/folder'           # The folder (prefix) within the bucket (e.g., 'Batch1' or 'images/')
+CSV_FILE_PATH = 'your_csv_file.csv'                    # Path to your CSV file containing image URLs
+URL_COLUMN_NAME = 'URL'                                # Name of the column in your CSV that contains the image URLs
+DEST_S3_BUCKET = 'your-destination-bucket-name'        # Your AWS S3 bucket name where images will be uploaded
+DEST_S3_FOLDER = 'your-folder-name'                    # Folder/prefix within the S3 bucket where images will be stored
 
-MAX_WORKERS = 30                            # Adjust based on your system. 20-50 is a reasonable range.
+MAX_WORKERS = 30                                       # Number of parallel workers (threads) for downloading/uploading. Adjust based on your system and network capacity.
 
-PROGRESS_FILE = 'processed_indices.log'
-ERROR_LOG_FILE = 'failed_urls.log'
+PROGRESS_FILE = 'processed_indices.log'                # File to track which CSV rows have been successfully processed
+ERROR_LOG_FILE = 'failed_urls.log'                     # File to log URLs that failed to process
 
 # --- SCRIPT ---
 
@@ -52,49 +55,53 @@ def log_processed_index(index):
 
 def process_image_download_upload(s3_client, source_url, original_index):
     """
-    Downloads an image from a public URL and uploads it to our S3 bucket.
+    Downloads an image, validates it, determines its true file type,
+    and uploads it to our S3 bucket with the correct file extension.
     """
     error_logger = logging.getLogger('error_logger')
     
     try:
-        # 1. Download the image from the public URL
         response = requests.get(source_url, timeout=30)
-        response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
-
-        # 2. Get the binary image data
+        response.raise_for_status()
         image_data = response.content
-        
-        # 3. Define the destination key
-        # Extract filename from URL path to keep it readable
-        filename = os.path.basename(urlparse(source_url).path)
-        if not filename: # Handle case where URL ends with a /
-             filename = f"image_{original_index}.jpg" # fallback filename
-        dest_key = f"{DEST_S3_FOLDER}/{original_index}_{filename}"
 
-        # 4. Upload the image data to our S3 bucket
+        try:
+            image = PILImage.open(BytesIO(image_data))
+            if not image.format:
+                raise ValueError("Could not determine image format from the provided data.")
+            image_format = image.format.lower()
+        except Exception as e:
+            raise ValueError(f"Invalid or unsupported image format. Pillow error: {e}")
+
+        extension_map = {'jpeg': 'jpg'}
+        extension = extension_map.get(image_format, image_format)
+
+        base_filename = os.path.splitext(os.path.basename(urlparse(source_url).path))[0]
+        if not base_filename:
+             base_filename = f"image"
+
+        new_filename = f"{base_filename}.{extension}"
+        dest_key = f"{DEST_S3_FOLDER}/{original_index}_{new_filename}"
+
         s3_client.put_object(
             Bucket=DEST_S3_BUCKET,
             Key=dest_key,
             Body=image_data,
-            ContentType=response.headers.get('Content-Type', 'image/jpeg') # Preserve content type
+            ContentType=response.headers.get('Content-Type', f'image/{extension}')
         )
         return original_index
 
     except requests.exceptions.RequestException as e:
-        # Handle download errors (network issues, invalid URL, timeouts)
         error_message = f"RequestException downloading {source_url}: {e}"
         logging.warning(error_message)
         error_logger.error(f"{source_url} - {error_message}")
         raise e
-    except ClientError as e:
-        # Handle S3 upload errors (e.g., AccessDenied to *our* bucket)
-        error_code = e.response.get("Error", {}).get("Code")
-        error_message = f"AWS ClientError uploading {source_url}: {error_code}"
+    except (ClientError, ValueError) as e:
+        error_message = f"Data or ClientError for {source_url}: {e}"
         logging.warning(error_message)
         error_logger.error(f"{source_url} - {error_message}")
         raise e
     except Exception as e:
-        # Handle any other unexpected errors
         error_message = f"An unexpected error occurred for URL {source_url}: {e}"
         logging.warning(error_message)
         error_logger.error(f"{source_url} - {error_message}")
@@ -122,17 +129,26 @@ def main():
     processed_indices = load_processed_indices()
     logging.info(f"Found {len(processed_indices)} already processed images. Resuming...")
     
-    tasks_to_process = df[~df.index.isin(processed_indices)]
+    # --- FIX IS HERE ---
+    # We apply the 'cast' right after the first filtering operation.
+    # This tells the type checker that 'unprocessed_df' is still a DataFrame.
+    unprocessed_df = cast(
+        pd.DataFrame,
+        df[~df.index.isin(processed_indices)]
+    )
+    
+    # Now that pyright knows 'unprocessed_df' is a DataFrame, this next line will work correctly.
+    tasks_to_process = unprocessed_df[unprocessed_df[URL_COLUMN_NAME].notna()]
+    # --- END FIX ---
     
     if tasks_to_process.empty:
-        logging.info("All images have already been processed. Nothing to do.")
+        logging.info("All images have already been processed or no new URLs found. Nothing to do.")
         return
         
     logging.info(f"Starting to download and upload {len(tasks_to_process)} new images...")
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_index = {
-            # Call the new download/upload function
             executor.submit(process_image_download_upload, s3_client, row[URL_COLUMN_NAME], index): index
             for index, row in tasks_to_process.iterrows()
         }
@@ -144,10 +160,11 @@ def main():
             try:
                 result_index = future.result()
                 log_processed_index(result_index)
-            except Exception as e:
+            except Exception:
                 logging.warning(f"Failed to process row index {original_index}. See {ERROR_LOG_FILE} for details.")
 
     logging.info("Script finished.")
+
 
 if __name__ == "__main__":
     main()
